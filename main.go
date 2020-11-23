@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/containerd/cgroups"
+	"github.com/fatih/color"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -66,7 +67,10 @@ func main() {
 		fill      = available - reserved
 	)
 
+	log.Printf(color.GreenString("starting situation"))
 	log.Printf("available: %d, filling: %d, reserving: %d", available, fill, reserved)
+
+	log.Printf(color.GreenString("allocating a slab of %d bytes + slice header", fill))
 
 	// force the allocation on the heap.
 	data = append(data, func() []byte {
@@ -77,23 +81,25 @@ func main() {
 		return slab
 	}())
 
+	log.Printf(color.GreenString("slab allocated"))
+
 	writeMemStats(&stats, log.Writer())
 
 	log.Printf("heap allocated: %d, gc planned for: %d, exceeding by: %d", stats.HeapAlloc, stats.NextGC, *limit-int64(stats.NextGC))
 
-	log.Printf("releasing the slab")
+	log.Printf(color.GreenString("releasing the slab"))
 	data = nil
-	log.Printf("slab released; there should be memory available to reallocate")
+	log.Printf("slab released; there is now sufficient memory available to reallocate")
 
 	if *gc {
-		log.Printf("running GC")
+		log.Printf(color.GreenString("running GC"))
 		runtime.GC()
 		log.Printf("stats after GC")
 		writeMemStats(&stats, log.Writer())
 		log.Printf("GC ran, this program should not crash")
 	}
 
-	log.Printf("now allocating a new slab for the reserved quantity")
+	log.Printf(color.GreenString("now allocating a new slab for the reserved quantity"))
 
 	// force the allocation on the heap.
 	data = append(data, func() []byte {
@@ -104,7 +110,7 @@ func main() {
 		return slab
 	}())
 
-	log.Printf("Congratulations, this program did not crash!")
+	log.Printf(color.YellowString("Congratulations, this program did not crash!"))
 }
 
 func interactiveMode() {
@@ -209,15 +215,16 @@ func reset(w http.ResponseWriter, r *http.Request) {
 
 func writeMemStats(stats *runtime.MemStats, w io.Writer) {
 	runtime.ReadMemStats(stats)
-	_, _ = fmt.Fprintln(w, "allocated: ", stats.Alloc)
-	_, _ = fmt.Fprintln(w, "malloc objects: ", stats.Mallocs)
-	_, _ = fmt.Fprintln(w, "freed objects: ", stats.Frees)
-	_, _ = fmt.Fprintln(w, "heap alloc: ", stats.HeapAlloc)
-	_, _ = fmt.Fprintln(w, "heap idle: ", stats.HeapIdle)
-	_, _ = fmt.Fprintln(w, "heap objects: ", stats.HeapObjects)
-	_, _ = fmt.Fprintln(w, "heap in-use: ", stats.HeapInuse)
-	_, _ = fmt.Fprintln(w, "heap released: ", stats.HeapReleased)
-	_, _ = fmt.Fprintln(w, "last gc: ", stats.LastGC)
-	_, _ = fmt.Fprintln(w, "next gc: ", stats.NextGC)
-	_, _ = fmt.Fprintln(w, "num gc: ", stats.NumGC)
+	_, _ = fmt.Fprintln(w, "memstats:")
+	_, _ = fmt.Fprintln(w, "\tallocated:", stats.Alloc)
+	_, _ = fmt.Fprintln(w, "\tmalloc objects:", stats.Mallocs)
+	_, _ = fmt.Fprintln(w, "\tfreed objects:", stats.Frees)
+	_, _ = fmt.Fprintln(w, "\theap alloc:", stats.HeapAlloc)
+	_, _ = fmt.Fprintln(w, "\theap idle:", stats.HeapIdle)
+	_, _ = fmt.Fprintln(w, "\theap objects:", stats.HeapObjects)
+	_, _ = fmt.Fprintln(w, "\theap in-use:", stats.HeapInuse)
+	_, _ = fmt.Fprintln(w, "\theap released:", stats.HeapReleased)
+	_, _ = fmt.Fprintln(w, "\tlast gc:", stats.LastGC)
+	_, _ = fmt.Fprintln(w, "\tnext gc:", stats.NextGC)
+	_, _ = fmt.Fprintln(w, "\tnum gc:", stats.NumGC)
 }
