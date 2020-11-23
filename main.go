@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -17,8 +18,13 @@ import (
 var data [][]byte // keep byte slabs
 
 func main() {
-	interactive := flag.Bool("interactive", false, "start in interactive HTTP mode")
-	limit := flag.Int64("limit", 32, "memory limit in MiB")
+	var (
+		interactive = flag.Bool("interactive", false, "start in interactive HTTP mode")
+		limit       = flag.Int64("limit", 32<<20, "memory limit in MiB")
+		gc          = flag.Bool("gc", false, "run GC to prevent overallocation")
+	)
+
+	flag.Parse()
 
 	// delete the cgroup if it exists.
 	if cgroup, err := cgroups.Load(cgroups.V1, cgroups.StaticPath("/trampoline")); err == nil {
@@ -51,6 +57,54 @@ func main() {
 		return
 	}
 
+	var stats runtime.MemStats
+	writeMemStats(&stats, log.Writer())
+
+	var (
+		reserved  = uint64(float64(*limit) * 0.10)
+		available = uint64(*limit) - stats.HeapAlloc
+		fill      = available - reserved
+	)
+
+	log.Printf("available: %d, filling: %d, reserving: %d", available, fill, reserved)
+
+	// force the allocation on the heap.
+	data = append(data, func() []byte {
+		slab := make([]byte, fill)
+		for i := range slab {
+			slab[i] = 0xff
+		}
+		return slab
+	}())
+
+	writeMemStats(&stats, log.Writer())
+
+	log.Printf("heap allocated: %d, gc planned for: %d, exceeding by: %d", stats.HeapAlloc, stats.NextGC, *limit-int64(stats.NextGC))
+
+	log.Printf("releasing the slab")
+	data = nil
+	log.Printf("slab released; there should be memory available to reallocate")
+
+	if *gc {
+		log.Printf("running GC")
+		runtime.GC()
+		log.Printf("stats after GC")
+		writeMemStats(&stats, log.Writer())
+		log.Printf("GC ran, this program should not crash")
+	}
+
+	log.Printf("now allocating a new slab for the reserved quantity")
+
+	// force the allocation on the heap.
+	data = append(data, func() []byte {
+		slab := make([]byte, reserved)
+		for i := range slab {
+			slab[i] = 0xff
+		}
+		return slab
+	}())
+
+	log.Printf("Congratulations, this program did not crash!")
 }
 
 func interactiveMode() {
@@ -65,7 +119,9 @@ func interactiveMode() {
 
 		_, _ = fmt.Fprintln(w, "added: ", bytes)
 		_, _ = fmt.Fprintln(w)
-		writeMemStats(w)
+
+		var stats runtime.MemStats
+		writeMemStats(&stats, w)
 	})
 
 	http.HandleFunc("/rel", func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +136,9 @@ func interactiveMode() {
 		_, _ = fmt.Fprintln(w, "released: ", released)
 		_, _ = fmt.Fprintln(w, "not released: ", not)
 		_, _ = fmt.Fprintln(w)
-		writeMemStats(w)
+
+		var stats runtime.MemStats
+		writeMemStats(&stats, w)
 	})
 
 	http.HandleFunc("/gc", gc)
@@ -133,22 +191,24 @@ func release(bytes int) (released, notReleased int) {
 
 func gc(w http.ResponseWriter, r *http.Request) {
 	runtime.GC()
-	writeMemStats(w)
+	var stats runtime.MemStats
+	writeMemStats(&stats, w)
 }
 
 func stats(w http.ResponseWriter, r *http.Request) {
-	writeMemStats(w)
+	var stats runtime.MemStats
+	writeMemStats(&stats, w)
 }
 
 func reset(w http.ResponseWriter, r *http.Request) {
 	data = nil
 	runtime.GC()
-	writeMemStats(w)
+	var stats runtime.MemStats
+	writeMemStats(&stats, w)
 }
 
-func writeMemStats(w http.ResponseWriter) {
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
+func writeMemStats(stats *runtime.MemStats, w io.Writer) {
+	runtime.ReadMemStats(stats)
 	_, _ = fmt.Fprintln(w, "allocated: ", stats.Alloc)
 	_, _ = fmt.Fprintln(w, "malloc objects: ", stats.Mallocs)
 	_, _ = fmt.Fprintln(w, "freed objects: ", stats.Frees)
