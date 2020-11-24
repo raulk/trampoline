@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 
 	"github.com/containerd/cgroups"
@@ -60,6 +61,16 @@ func main() {
 	)
 
 	flag.Parse()
+
+	ch := make(chan struct{}, 1)
+	go func() {
+		for range ch {
+			log.Println("received memory pressure notification")
+		}
+	}()
+	maxHeap := uintptr(*limit)
+	fmt.Println("setting max heap to:", maxHeap)
+	debug.SetMaxHeap(maxHeap, ch)
 
 	// delete the cgroup if it exists.
 	if cgroup, err := cgroups.Load(cgroups.V1, cgroups.StaticPath("/trampoline")); err == nil {
